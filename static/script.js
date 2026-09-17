@@ -383,10 +383,8 @@ function recalc() {
 
 // -------------------------------------------------------------------- start
 
-function init() {
-    const roster = $( '#roster' );
-    for ( let i = 0; i < MAX_SLOTS; i++ ) roster.appendChild( buildSlot( i ) );
-
+function populateDex( data ) {
+    for ( const name in data ) POKEMON[ name ] = data[ name ];
     const list = $( '#pokemon-list' );
     const frag = document.createDocumentFragment();
     Object.keys( POKEMON ).forEach( name => {
@@ -394,7 +392,15 @@ function init() {
         option.value = name;
         frag.appendChild( option );
     } );
+    list.innerHTML = '';
     list.appendChild( frag );
+    slots.forEach( refreshCurve );
+    recalc();
+}
+
+function init() {
+    const roster = $( '#roster' );
+    for ( let i = 0; i < MAX_SLOTS; i++ ) roster.appendChild( buildSlot( i ) );
 
     $( '#shop-only' ).addEventListener( 'change', recalc );
     $( '#reset' ).addEventListener( 'click', () => {
@@ -422,23 +428,51 @@ const domReady = () => new Promise( res => {
     else document.addEventListener( 'DOMContentLoaded', res );
 } );
 
-// window.POKEMON_DATA is set by the bundled build; otherwise fetch the JSON.
-if ( window.POKEMON_DATA ) {
-    POKEMON = window.POKEMON_DATA;
-    domReady().then( init );
-} else {
-    Promise.all( [
-        fetch( 'static/pokemon.json' ).then( r => r.json() ),
-        domReady()
-    ] ).then( ( [ data ] ) => {
-        for ( const slug in data ) {
-            POKEMON[ data[ slug ].name ] = data[ slug ].experience_group;
-        }
-        init();
-    } ).catch( () => {
-        document.getElementById( 'results' ).textContent =
-            'Could not load the Pokemon list. Serve this page over http:// rather than opening the file directly.';
-    } );
+/** Say out loud whether the species list arrived. A silent empty dex just
+ *  looks like a broken autocomplete box, which is very hard to diagnose. */
+function reportDex( error ) {
+    const node = $( '#dex-status' );
+    if ( !node ) return;
+    const n = Object.keys( POKEMON ).length;
+    if ( n && !error ) {
+        node.className = 'dex-status ok';
+        node.textContent = `${ fmt( n ) } species loaded. Start typing a name in any slot.`;
+        return;
+    }
+    node.className = 'dex-status bad';
+    node.textContent = 'Could not load the species list, so the name suggestions are '
+        + 'empty. Check that static/pokemon-data.js was deployed alongside index.html'
+        + ( error ? ` (${ error })` : '' ) + '.';
 }
+
+if ( typeof window === 'undefined' ) return;
+
+/** Load the species list. Preferred path is the plain script tag, which has
+ *  nothing to fetch; the JSON fetch stays as a fallback. */
+function loadDex() {
+    if ( window.POKEMON_DATA ) return Promise.resolve( window.POKEMON_DATA );
+    if ( typeof fetch !== 'function' ) {
+        return Promise.reject( new Error( 'static/pokemon-data.js did not load' ) );
+    }
+    return fetch( 'static/pokemon.json' )
+        .then( r => {
+            if ( !r.ok ) throw new Error( 'HTTP ' + r.status );
+            return r.json();
+        } )
+        .then( raw => {
+            const map = {};
+            for ( const slug in raw ) map[ raw[ slug ].name ] = raw[ slug ].experience_group;
+            return map;
+        } );
+}
+
+domReady().then( () => {
+    // Build the interface first so a dex problem can never leave a blank page.
+    init();
+    return loadDex().then( data => {
+        populateDex( data );
+        reportDex();
+    } );
+} ).catch( err => reportDex( err.message ) );
 
 } )();
