@@ -2,7 +2,6 @@
  * Pokémon Candy & Team Calculator
  */
 
-// Configuration & Constants
 const CANDIES = [
   { id: 'XL', exp: 30000, name: 'Exp. Candy XL' },
   { id: 'L',  exp: 10000, name: 'Exp. Candy L' },
@@ -11,53 +10,53 @@ const CANDIES = [
   { id: 'XS', exp: 100,   name: 'Exp. Candy XS' }
 ];
 
-// Stub for Legends ZA Mega Shards (Adjust prices as needed)
-const SHARD_PRICES = {
-  S: 10,
-  M: 35,
-  L: 100
-};
+const SHARD_PRICES = { S: 10, M: 35, L: 100 };
 
-// Global Application State
 const state = {
   pokemonData: null,
-  allowedCandies: new Set(['S', 'M', 'L']), // Default enabled sizes
+  allowedCandies: new Set(['S', 'M', 'L']),
   team: [
     { id: Date.now(), pokemonKey: '', currentLevel: 1, targetLevel: 50 }
   ]
 };
 
-// --- Initialization ---
-document.addEventListener('DOMContentLoaded', async () => {
-  await loadPokemonData();
+// Initialize immediately so UI renders even if fetch fails
+document.addEventListener('DOMContentLoaded', () => {
   initUI();
+  renderTeamSlots();
   calculateAndRender();
+  loadPokemonData();
 });
 
 async function loadPokemonData() {
   try {
-    const response = await fetch('pokemon.json');
+    // Point fetch to the static/ directory
+    const response = await fetch('./static/pokemon.json');
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} - File not found at ${response.url}`);
+    }
+
     state.pokemonData = await response.json();
+    renderTeamSlots();
+    calculateAndRender();
   } catch (error) {
-    console.error('Failed to load pokemon.json:', error);
+    console.error('Failed to load pokemon.json:', error.message);
   }
 }
 
 function initUI() {
-  // Bind Candy Filter Checkboxes
   document.querySelectorAll('.candy-toggle').forEach(checkbox => {
     checkbox.addEventListener('change', (e) => {
-      const size = e.target.value;
       if (e.target.checked) {
-        state.allowedCandies.add(size);
+        state.allowedCandies.add(e.target.value);
       } else {
-        state.allowedCandies.delete(size);
+        state.allowedCandies.delete(e.target.value);
       }
       calculateAndRender();
     });
   });
 
-  // Add Member Button Listener
   const addBtn = document.getElementById('add-member-btn');
   if (addBtn) {
     addBtn.addEventListener('click', () => {
@@ -75,7 +74,6 @@ function initUI() {
   }
 }
 
-// --- Dynamic UI Rendering ---
 function renderTeamSlots() {
   const container = document.getElementById('team-container');
   if (!container) return;
@@ -85,7 +83,6 @@ function renderTeamSlots() {
   state.team.forEach((member, index) => {
     const card = document.createElement('div');
     card.className = 'team-member-card';
-    card.dataset.id = member.id;
 
     card.innerHTML = `
       <div class="card-header">
@@ -96,20 +93,20 @@ function renderTeamSlots() {
         <label>
           Pokémon:
           <select class="species-select" onchange="updateMember(${member.id}, 'pokemonKey', this.value)">
-            <option value="">Select Pokémon...</option>
+            <option value="">${state.pokemonData ? 'Select Pokémon...' : 'Loading Data / Server Required...'}</option>
             ${getPokemonOptions(member.pokemonKey)}
           </select>
         </label>
-        
+
         <div class="level-inputs">
           <label>
             Current Lvl:
-            <input type="number" min="1" max="99" value="${member.currentLevel}" 
+            <input type="number" min="1" max="99" value="${member.currentLevel}"
                    onchange="updateMember(${member.id}, 'currentLevel', parseInt(this.value) || 1)">
           </label>
           <label>
             Target Lvl:
-            <input type="number" min="2" max="100" value="${member.targetLevel}" 
+            <input type="number" min="2" max="100" value="${member.targetLevel}"
                    onchange="updateMember(${member.id}, 'targetLevel', parseInt(this.value) || 100)">
           </label>
         </div>
@@ -121,33 +118,25 @@ function renderTeamSlots() {
     container.appendChild(card);
   });
 
-  // Disable add button if team size limit reached
   const addBtn = document.getElementById('add-member-btn');
   if (addBtn) addBtn.disabled = state.team.length >= 6;
 }
 
 function getPokemonOptions(selectedKey) {
   if (!state.pokemonData) return '';
-  
-  // Sort species alphabetically
-  const keys = Object.keys(state.pokemonData).sort();
-  return keys.map(key => {
+  return Object.keys(state.pokemonData).sort().map(key => {
     const selected = key === selectedKey ? 'selected' : '';
     const name = state.pokemonData[key].name || key;
     return `<option value="${key}" ${selected}>${name}</option>`;
   }).join('');
 }
 
-// --- State Mutations ---
 window.updateMember = function(id, field, value) {
   const member = state.team.find(m => m.id === id);
   if (member) {
     member[field] = value;
-    
-    // Bounds enforcement
     if (field === 'currentLevel') member.currentLevel = Math.max(1, Math.min(99, member.currentLevel));
     if (field === 'targetLevel') member.targetLevel = Math.max(member.currentLevel + 1, Math.min(100, member.targetLevel));
-    
     calculateAndRender();
   }
 };
@@ -158,15 +147,14 @@ window.removeMember = function(id) {
   calculateAndRender();
 };
 
-// --- Calculation Engine ---
 function calculateAndRender() {
   const activeCandies = CANDIES.filter(c => state.allowedCandies.has(c.id));
   const teamTotals = { XS: 0, S: 0, M: 0, L: 0, XL: 0, totalXP: 0 };
 
   state.team.forEach(member => {
     const memberOutputEl = document.getElementById(`output-${member.id}`);
-    
-    if (!member.pokemonKey || !state.pokemonData[member.pokemonKey]) {
+
+    if (!member.pokemonKey || !state.pokemonData || !state.pokemonData[member.pokemonKey]) {
       if (memberOutputEl) memberOutputEl.innerHTML = '<small>Select a Pokémon</small>';
       return;
     }
@@ -179,13 +167,11 @@ function calculateAndRender() {
 
     const candyAlloc = allocateCandies(requiredXP, activeCandies);
 
-    // Accumulate Team Totals
     teamTotals.totalXP += requiredXP;
     Object.keys(candyAlloc).forEach(size => {
       teamTotals[size] += candyAlloc[size];
     });
 
-    // Render individual member breakdown
     if (memberOutputEl) {
       memberOutputEl.innerHTML = `
         <p><strong>XP Needed:</strong> ${requiredXP.toLocaleString()}</p>
@@ -199,15 +185,11 @@ function calculateAndRender() {
 
 function calculateXP(pokemon, currentLvl, targetLvl) {
   if (currentLvl >= targetLvl) return 0;
-  
-  // Handles growth rates or direct cumulative EXP arrays in pokemon.json
   const expTable = pokemon.expTable || (state.pokemonData.growthRates && state.pokemonData.growthRates[pokemon.growthRate]);
-  
   if (expTable) {
     return expTable[targetLvl - 1] - expTable[currentLvl - 1];
   }
-  
-  return 0; // Fallback if schema differs
+  return 0;
 }
 
 function allocateCandies(requiredXP, activeCandies) {
@@ -216,7 +198,6 @@ function allocateCandies(requiredXP, activeCandies) {
 
   let remainingXP = requiredXP;
 
-  // Greedy allocation from largest active size to smallest
   for (const candy of activeCandies) {
     if (remainingXP <= 0) break;
     const count = Math.floor(remainingXP / candy.exp);
@@ -226,7 +207,6 @@ function allocateCandies(requiredXP, activeCandies) {
     }
   }
 
-  // Cover remaining XP gap with 1 smallest allowed candy
   if (remainingXP > 0) {
     const smallestAllowed = activeCandies[activeCandies.length - 1];
     allocation[smallestAllowed.id] += 1;
@@ -235,18 +215,11 @@ function allocateCandies(requiredXP, activeCandies) {
   return allocation;
 }
 
-function calculateMegaShards(teamTotals) {
-  return (teamTotals.S * (SHARD_PRICES.S || 0)) +
-         (teamTotals.M * (SHARD_PRICES.M || 0)) +
-         (teamTotals.L * (SHARD_PRICES.L || 0));
-}
-
-// --- Summary & Output Formatting ---
 function renderTeamSummary(teamTotals) {
   const summaryEl = document.getElementById('total-candies-output');
   if (!summaryEl) return;
 
-  const shardsNeeded = calculateMegaShards(teamTotals);
+  const shardsNeeded = (teamTotals.S * SHARD_PRICES.S) + (teamTotals.M * SHARD_PRICES.M) + (teamTotals.L * SHARD_PRICES.L);
 
   summaryEl.innerHTML = `
     <div class="summary-card">
