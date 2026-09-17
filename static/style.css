@@ -1,255 +1,297 @@
-/* --- Base Reset & Typography --- */
+/* Candy Calc — Team Builder edition
+ * Palette: Lumiose at night, Quasartico Inc. cyan, Mega Shard magenta. */
+
 :root {
-  --bg-color: #f4f6f8;
-  --card-bg: #ffffff;
-  --text-primary: #1f2937;
-  --text-secondary: #6b7280;
-  --accent-color: #3b82f6;
-  --accent-hover: #2563eb;
-  --danger-color: #ef4444;
-  --border-color: #e5e7eb;
-  --radius: 12px;
-  --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    --night:  #f4f6fb;
+    --slab:   #ffffff;
+    --sunk:   #eef1f8;
+    --edge:   #d3d9e8;
+    --paper:  #1a1e2c;
+    --mute:   #6b7590;
+    --mega:   #d3117a;
+    --quasar: #0c7f8e;
+    --warn:   #b4451a;
+    --radius: 3px;
 }
 
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+:root:not([data-theme="light"]) {
+    color-scheme: light dark;
 }
+
+@media ( prefers-color-scheme: dark ) {
+    :root:not([data-theme="light"]) {
+        --night:  #0e1120;
+        --slab:   #171b2c;
+        --sunk:   #10131f;
+        --edge:   #2a3047;
+        --paper:  #e6eaf4;
+        --mute:   #8590ab;
+        --mega:   #f0399b;
+        --quasar: #46d3e0;
+        --warn:   #ff9a6b;
+    }
+}
+
+:root[data-theme="dark"] {
+    --night:  #0e1120;
+    --slab:   #171b2c;
+    --sunk:   #10131f;
+    --edge:   #2a3047;
+    --paper:  #e6eaf4;
+    --mute:   #8590ab;
+    --mega:   #f0399b;
+    --quasar: #46d3e0;
+    --warn:   #ff9a6b;
+}
+
+* { box-sizing: border-box; }
 
 body {
-  background-color: var(--bg-color);
-  color: var(--text-primary);
-  line-height: 1.5;
-  padding: 20px;
+    margin: 0;
+    padding: 2.5rem 1.25rem 4rem;
+    background: var( --night );
+    color: var( --paper );
+    font: 400 16px/1.55 'Barlow', 'Segoe UI', Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
 }
 
-.app-container {
-  max-width: 1100px;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
+.wrap { max-width: 62rem; margin: 0 auto; }
+
+h1, h2, .slot-no, thead th, tfoot td, .curve, .opt, button {
+    font-family: 'Barlow Semi Condensed', 'Barlow', 'Segoe UI', sans-serif;
 }
 
-/* --- Header --- */
-.app-header {
-  text-align: center;
-  margin-bottom: 8px;
+/* ---------------------------------------------------------------- header */
+
+header.top { margin-bottom: 2rem; }
+
+h1 {
+    margin: 0;
+    font-size: clamp( 2.1rem, 6vw, 3.1rem );
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: -0.015em;
 }
 
-.app-header h1 {
-  font-size: 2rem;
-  color: var(--text-primary);
+h1 .za { color: var( --mega ); }
+
+header.top p {
+    margin: 0.5rem 0 0;
+    max-width: 46ch;
+    color: var( --mute );
 }
 
-.app-header p {
-  color: var(--text-secondary);
-  font-size: 0.95rem;
+/* --------------------------------------------------------------- options */
+
+.options {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem 1.5rem;
+    padding: 0.85rem 1rem;
+    margin-bottom: 1.5rem;
+    background: var( --slab );
+    border: 1px solid var( --edge );
+    border-left: 3px solid var( --quasar );
+    border-radius: var( --radius );
 }
 
-/* --- Reusable Card Component --- */
-.card {
-  background-color: var(--card-bg);
-  border-radius: var(--radius);
-  padding: 20px;
-  box-shadow: var(--shadow);
-  border: 1px solid var(--border-color);
+.opt {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    font-size: 1.02rem;
+    cursor: pointer;
+    user-select: none;
 }
 
-/* --- Candy Filters --- */
-.filter-section h3 {
-  font-size: 1.1rem;
-  margin-bottom: 4px;
+.opt input { accent-color: var( --mega ); width: 1.05rem; height: 1.05rem; margin: 0; }
+.opt small { display: block; color: var( --mute ); font-size: 0.82rem; }
+
+button {
+    margin-left: auto;
+    padding: 0.4rem 0.9rem;
+    font-size: 1rem;
+    color: var( --mute );
+    background: none;
+    border: 1px solid var( --edge );
+    border-radius: var( --radius );
+    cursor: pointer;
 }
 
-.section-desc {
-  font-size: 0.85rem;
-  color: var(--text-secondary);
-  margin-bottom: 12px;
+button:hover { color: var( --paper ); border-color: var( --mute ); }
+
+/* ---------------------------------------------------------------- roster */
+
+#roster {
+    display: grid;
+    grid-template-columns: repeat( 3, 1fr );
+    gap: 0.75rem;
+    margin-bottom: 2.25rem;
 }
 
-.candy-filter-group {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+.slot {
+    padding: 0.7rem 0.8rem 0.8rem;
+    background: var( --slab );
+    border: 1px solid var( --edge );
+    border-radius: var( --radius );
 }
 
-.toggle-pill input {
-  display: none;
+.slot.filled { border-color: color-mix( in srgb, var( --mega ) 45%, var( --edge ) ); }
+.slot.unknown { border-color: color-mix( in srgb, var( --warn ) 55%, var( --edge ) ); }
+
+.slot header { display: flex; align-items: center; gap: 0.5rem; }
+
+.slot-no {
+    flex: none;
+    width: 1.5rem;
+    height: 1.5rem;
+    display: grid;
+    place-items: center;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var( --mute );
+    background: var( --sunk );
+    border-radius: 50%;
 }
 
-.toggle-pill span {
-  display: inline-block;
-  padding: 6px 14px;
-  background-color: #f3f4f6;
-  border: 1px solid var(--border-color);
-  border-radius: 20px;
-  font-size: 0.875rem;
-  font-weight: 500;
-  cursor: pointer;
-  user-select: none;
-  transition: all 0.2s ease;
+.slot.filled .slot-no { color: var( --night ); background: var( --mega ); }
+
+input {
+    font: inherit;
+    color: inherit;
+    background: var( --sunk );
+    border: 1px solid transparent;
+    border-radius: var( --radius );
+    padding: 0.3rem 0.45rem;
 }
 
-.toggle-pill input:checked + span {
-  background-color: var(--accent-color);
-  color: #ffffff;
-  border-color: var(--accent-color);
+input:focus-visible { outline: 2px solid var( --quasar ); outline-offset: 1px; }
+input::placeholder { color: var( --mute ); }
+
+.species { flex: 1; min-width: 0; font-weight: 500; }
+
+.clear {
+    flex: none;
+    margin: 0;
+    padding: 0;
+    width: 1.5rem;
+    height: 1.5rem;
+    font-size: 1.15rem;
+    line-height: 1;
+    border-color: transparent;
 }
 
-/* --- Team Controls & Grid --- */
-.team-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
+.levels {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.55rem;
+    padding-left: 2rem;
+    font-size: 0.9rem;
+    color: var( --mute );
 }
 
-.team-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 16px;
+.levels label { display: flex; align-items: center; gap: 0.3rem; }
+.levels input { width: 3.4rem; text-align: center; }
+
+.curve {
+    margin-left: auto;
+    font-size: 0.82rem;
+    color: var( --quasar );
+    text-align: right;
+    line-height: 1.15;
 }
 
-.team-member-card {
-  background-color: var(--card-bg);
-  border-radius: var(--radius);
-  padding: 16px;
-  box-shadow: var(--shadow);
-  border: 1px solid var(--border-color);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+/* --------------------------------------------------------------- results */
+
+h2 {
+    margin: 0 0 0.75rem;
+    font-size: 1.35rem;
+    font-weight: 600;
 }
 
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  border-bottom: 1px solid var(--border-color);
-  padding-bottom: 8px;
+.scroll { overflow-x: auto; }
+
+table.plan {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
 }
 
-.card-header h4 {
-  font-size: 1rem;
-  color: var(--text-primary);
+table.plan th,
+table.plan td {
+    padding: 0.5rem 0.6rem;
+    text-align: left;
+    border-bottom: 1px solid var( --edge );
+    white-space: nowrap;
 }
 
-.remove-btn {
-  background: none;
-  border: none;
-  color: var(--danger-color);
-  font-size: 1.2rem;
-  cursor: pointer;
-  padding: 0 4px;
+table.plan thead th {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var( --mute );
+    border-bottom-width: 2px;
 }
 
-.card-body {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+table.plan .num { text-align: right; }
+table.plan .zero { color: var( --mute ); opacity: 0.45; }
+table.plan tbody tr:hover { background: var( --slab ); }
+
+abbr[title] { text-decoration: none; cursor: help; }
+
+.mon-name { font-weight: 500; }
+.mon-curve { display: block; font-size: 0.8rem; color: var( --mute ); }
+.th-mon .slot-no { display: inline-grid; margin-right: 0.45rem; vertical-align: middle; }
+.th-lv { color: var( --mute ); font-size: 0.92rem; }
+
+tfoot td {
+    padding-top: 0.7rem;
+    font-size: 1.02rem;
+    font-weight: 600;
+    border-bottom: none;
 }
 
-.card-body label {
-  display: flex;
-  flex-direction: column;
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  gap: 4px;
+.warn-cell { color: var( --warn ); text-align: left; }
+
+.summary {
+    margin: 1.1rem 0 0;
+    padding: 0.85rem 1rem;
+    background: var( --slab );
+    border-left: 3px solid var( --mega );
+    border-radius: var( --radius );
 }
 
-select, input[type="number"] {
-  padding: 8px 10px;
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  font-size: 0.95rem;
-  outline: none;
-  transition: border-color 0.2s;
+.summary .shards { color: var( --mega ); }
+
+.empty, .warn { margin: 0 0 0.75rem; color: var( --mute ); }
+.warn { color: var( --warn ); }
+
+/* ---------------------------------------------------------------- footer */
+
+footer {
+    margin-top: 3rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var( --edge );
+    font-size: 0.85rem;
+    color: var( --mute );
 }
 
-select:focus, input[type="number"]:focus {
-  border-color: var(--accent-color);
+footer a { color: inherit; }
+
+/* ------------------------------------------------------------ responsive */
+
+@media ( max-width: 760px ) {
+    #roster { grid-template-columns: repeat( 2, 1fr ); }
 }
 
-.level-inputs {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
+@media ( max-width: 520px ) {
+    body { padding: 1.75rem 0.9rem 3rem; }
+    #roster { grid-template-columns: 1fr; }
+    .levels { padding-left: 0; flex-wrap: wrap; }
+    button { margin-left: 0; }
 }
 
-.member-candy-output {
-  background-color: #f9fafb;
-  border-radius: 6px;
-  padding: 10px;
-  font-size: 0.85rem;
-  border: 1px dashed var(--border-color);
-}
-
-/* --- Buttons --- */
-.btn {
-  padding: 8px 16px;
-  border-radius: 8px;
-  font-size: 0.9rem;
-  font-weight: 600;
-  cursor: pointer;
-  border: none;
-  transition: background-color 0.2s;
-}
-
-.btn-primary {
-  background-color: var(--accent-color);
-  color: #ffffff;
-}
-
-.btn-primary:hover {
-  background-color: var(--accent-hover);
-}
-
-.btn:disabled {
-  background-color: #d1d5db;
-  cursor: not-allowed;
-}
-
-/* --- Summary Card --- */
-.summary-card {
-  background-color: #1e293b;
-  color: #ffffff;
-  border-radius: var(--radius);
-  padding: 24px;
-  box-shadow: var(--shadow);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.summary-card h3 {
-  font-size: 1.25rem;
-  border-bottom: 1px solid #334155;
-  padding-bottom: 8px;
-}
-
-.total-candies-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  font-size: 0.95rem;
-  margin: 4px 0;
-}
-
-.total-candies-list span {
-  background-color: #334155;
-  padding: 4px 10px;
-  border-radius: 6px;
-}
-
-.shards-estimate {
-  background-color: #0f172a;
-  padding: 12px;
-  border-radius: 8px;
-  border-left: 4px solid #a855f7; /* Purple accent for Mega Shards */
-  font-size: 1rem;
+@media ( prefers-reduced-motion: reduce ) {
+    * { transition: none !important; animation: none !important; }
 }

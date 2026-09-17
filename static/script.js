@@ -1,246 +1,444 @@
-/**
- * Pokémon Candy & Team Calculator
+/* Candy Calc — Team Builder edition
+ * Fork of richi3f/candy-calc, adapted for Pokemon Legends: Z-A.
+ *
+ * Differences from upstream:
+ *   - Plans a full party of up to 6 Pokemon at once instead of one.
+ *   - Replaces the GLPK mixed-integer solve with an exact dynamic program,
+ *     so jQuery, glpk.min.js and problem.txt are no longer needed.
+ *   - Adds a Quasartico shop mode that restricts the solve to S / M / L,
+ *     the only sizes sold for Mega Shards.
  */
+( () => {
+'use strict';
+
+// ---------------------------------------------------------------- constants
 
 const CANDIES = [
-  { id: 'XL', exp: 30000, name: 'Exp. Candy XL' },
-  { id: 'L',  exp: 10000, name: 'Exp. Candy L' },
-  { id: 'M',  exp: 3000,  name: 'Exp. Candy M' },
-  { id: 'S',  exp: 800,   name: 'Exp. Candy S' },
-  { id: 'XS', exp: 100,   name: 'Exp. Candy XS' }
+    { key: 'xs', label: 'XS', title: 'Extra Small', exp: 100,   shards: null },
+    { key: 's',  label: 'S',  title: 'Small',       exp: 800,   shards: 8    },
+    { key: 'm',  label: 'M',  title: 'Medium',      exp: 3000,  shards: 30   },
+    { key: 'l',  label: 'L',  title: 'Large',       exp: 10000, shards: 100  },
+    { key: 'xl', label: 'XL', title: 'Extra Large', exp: 30000, shards: null }
 ];
 
-const SHARD_PRICES = { S: 10, M: 35, L: 100 };
+// Every candy yield is a multiple of 100, so the dynamic program counts in
+// units of 100 Exp. instead of raw Exp. That shrinks the table 100-fold.
+const UNIT = 100;
+const SHOP_KEYS = [ 's', 'm', 'l' ];   // sold at Quasartico Inc. for Mega Shards
+const MAX_SLOTS = 6;
+const MAX_LEVEL = 100;
+const INF = Infinity;
 
-const state = {
-  pokemonData: null,
-  allowedCandies: new Set(['S', 'M', 'L']),
-  team: [
-    { id: Date.now(), pokemonKey: '', currentLevel: 1, targetLevel: 50 }
-  ]
+// Exp. curves, unchanged from upstream.
+const CURVES = {
+    'Fast': n => Math.floor( Math.pow( n, 3 ) * 4 / 5 ),
+    'Medium Fast': n => Math.pow( n, 3 ),
+    'Medium Slow': n => Math.floor(
+        Math.pow( n, 3 ) * 6 / 5 - Math.pow( n, 2 ) * 15 + n * 100 - 140 ),
+    'Slow': n => Math.floor( Math.pow( n, 3 ) * 5 / 4 ),
+    'Erratic': n => {
+        if ( n < 50 ) return Math.floor( Math.pow( n, 3 ) * ( 100 - n ) / 50 );
+        if ( n <= 68 ) return Math.floor( Math.pow( n, 3 ) * ( 150 - n ) / 100 );
+        if ( n < 98 ) return Math.floor( Math.pow( n, 3 ) * ( 1911 - n * 10 ) / 1500 );
+        return Math.floor( Math.pow( n, 3 ) * ( 160 - n ) / 100 );
+    },
+    'Fluctuating': n => {
+        if ( n < 15 ) return Math.floor( Math.pow( n, 3 ) * ( 73 + n ) / 150 );
+        if ( n < 36 ) return Math.floor( Math.pow( n, 3 ) * ( 14 + n ) / 50 );
+        return Math.floor( Math.pow( n, 3 ) * ( 64 + n ) / 100 );
+    }
 };
 
-// Initialize immediately so UI renders even if fetch fails
-document.addEventListener('DOMContentLoaded', () => {
-  initUI();
-  renderTeamSlots();
-  calculateAndRender();
-  loadPokemonData();
-});
+const expAtLevel = ( curve, n ) => ( n <= 1 ) ? 0 : CURVES[ curve ]( n );
+const fmt = n => n.toLocaleString( 'en-US' );
+const clamp = ( n, lo, hi ) => Math.max( lo, Math.min( n, hi ) );
 
-async function loadPokemonData() {
-  try {
-    // Point fetch to the static/ directory
-    const response = await fetch('./static/pokemon.json');
+// ------------------------------------------------------------------- solver
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status} - File not found at ${response.url}`);
+/**
+ * Cheapest bag of candy that covers `expNeeded`.
+ *
+ * Upstream minimised sum( (yield_i + 1) * count_i ), which is really a
+ * lexicographic objective: waste as little Exp. as possible, then use as few
+ * candies as possible. This reproduces that exactly with an unbounded
+ * knapsack over 100-Exp. units.
+ *
+ * @param {number} expNeeded   Exp. points still required (>= 0).
+ * @param {string[]} allowed   Candy keys the solve may use.
+ * @returns {{counts:Object, expGiven:number, surplus:number, total:number}|null}
+ *          null when `allowed` is empty or nothing can reach the target.
+ */
+function solve( expNeeded, allowed ) {
+    const sizes = CANDIES.filter( c => allowed.includes( c.key ) );
+    if ( !sizes.length ) return null;
+
+    const empty = { counts: {}, expGiven: 0, surplus: 0, total: 0 };
+    sizes.forEach( c => empty.counts[ c.key ] = 0 );
+    if ( expNeeded <= 0 ) return empty;
+
+    const yields = sizes.map( c => c.exp / UNIT );
+    const target = Math.ceil( expNeeded / UNIT );
+    const maxY = Math.max( ...yields );
+
+    // Overshooting by a full candy is never optimal, so the table only has to
+    // run one candy past the target.
+    const cap = target + maxY;
+    const count = new Float64Array( cap + 1 ).fill( INF );
+    count[ 0 ] = 0;
+
+    for ( let u = 1; u <= cap; u++ ) {
+        let best = INF;
+        for ( let i = 0; i < yields.length; i++ ) {
+            const prev = u - yields[ i ];
+            if ( prev >= 0 && count[ prev ] + 1 < best ) best = count[ prev ] + 1;
+        }
+        count[ u ] = best;
     }
 
-    state.pokemonData = await response.json();
-    renderTeamSlots();
-    calculateAndRender();
-  } catch (error) {
-    console.error('Failed to load pokemon.json:', error.message);
-  }
+    // Least Exp. wasted first, then fewest candies. Not every unit total is
+    // reachable once XS is off the table, hence the scan.
+    let pick = -1;
+    for ( let u = target; u <= cap; u++ ) {
+        if ( count[ u ] !== INF ) { pick = u; break; }
+    }
+    if ( pick < 0 ) return null;
+
+    // Walk the table back to recover which candies were used.
+    const counts = {};
+    sizes.forEach( c => counts[ c.key ] = 0 );
+    let u = pick;
+    while ( u > 0 ) {
+        for ( let i = sizes.length - 1; i >= 0; i-- ) {
+            const prev = u - yields[ i ];
+            if ( prev >= 0 && count[ prev ] === count[ u ] - 1 ) {
+                counts[ sizes[ i ].key ]++;
+                u = prev;
+                break;
+            }
+        }
+    }
+
+    const expGiven = pick * UNIT;
+    return {
+        counts,
+        expGiven,
+        surplus: expGiven - expNeeded,
+        total: count[ pick ]
+    };
 }
 
-function initUI() {
-  document.querySelectorAll('.candy-toggle').forEach(checkbox => {
-    checkbox.addEventListener('change', (e) => {
-      if (e.target.checked) {
-        state.allowedCandies.add(e.target.value);
-      } else {
-        state.allowedCandies.delete(e.target.value);
-      }
-      calculateAndRender();
-    });
-  });
-
-  const addBtn = document.getElementById('add-member-btn');
-  if (addBtn) {
-    addBtn.addEventListener('click', () => {
-      if (state.team.length < 6) {
-        state.team.push({
-          id: Date.now(),
-          pokemonKey: '',
-          currentLevel: 1,
-          targetLevel: 50
-        });
-        renderTeamSlots();
-        calculateAndRender();
-      }
-    });
-  }
+/**
+ * Price a candy tally at Quasartico Inc.
+ * @returns {{shards:number, dropOnly:number}} shard cost of the sizes that are
+ *          sold, and how many candies have to come from drops instead.
+ */
+function shardCost( counts ) {
+    let shards = 0, dropOnly = 0;
+    for ( const candy of CANDIES ) {
+        const n = counts[ candy.key ] || 0;
+        if ( !n ) continue;
+        if ( candy.shards === null ) dropOnly += n;
+        else shards += n * candy.shards;
+    }
+    return { shards, dropOnly };
 }
 
-function renderTeamSlots() {
-  const container = document.getElementById('team-container');
-  if (!container) return;
+// ---------------------------------------------------------------------- app
 
-  container.innerHTML = '';
+let POKEMON = {};            // display name -> Exp. curve name
+const slots = [];            // one entry per party slot
 
-  state.team.forEach((member, index) => {
-    const card = document.createElement('div');
-    card.className = 'team-member-card';
+const $  = sel => document.querySelector( sel );
+const el = ( tag, cls, text ) => {
+    const node = document.createElement( tag );
+    if ( cls ) node.className = cls;
+    if ( text !== undefined ) node.textContent = text;
+    return node;
+};
 
+function allowedKeys() {
+    return $( '#shop-only' ).checked
+        ? SHOP_KEYS.slice()
+        : CANDIES.map( c => c.key );
+}
+
+function buildSlot( index ) {
+    const card = el( 'article', 'slot' );
     card.innerHTML = `
-      <div class="card-header">
-        <h4>Member ${index + 1}</h4>
-        ${state.team.length > 1 ? `<button class="remove-btn" onclick="removeMember(${member.id})">✕</button>` : ''}
-      </div>
-      <div class="card-body">
-        <label>
-          Pokémon:
-          <select class="species-select" onchange="updateMember(${member.id}, 'pokemonKey', this.value)">
-            <option value="">${state.pokemonData ? 'Select Pokémon...' : 'Loading Data / Server Required...'}</option>
-            ${getPokemonOptions(member.pokemonKey)}
-          </select>
-        </label>
-
-        <div class="level-inputs">
-          <label>
-            Current Lvl:
-            <input type="number" min="1" max="99" value="${member.currentLevel}"
-                   onchange="updateMember(${member.id}, 'currentLevel', parseInt(this.value) || 1)">
-          </label>
-          <label>
-            Target Lvl:
-            <input type="number" min="2" max="100" value="${member.targetLevel}"
-                   onchange="updateMember(${member.id}, 'targetLevel', parseInt(this.value) || 100)">
-          </label>
+        <header>
+            <span class="slot-no">${ index + 1 }</span>
+            <input class="species" type="text" list="pokemon-list"
+                   placeholder="Empty slot" aria-label="Pokemon in slot ${ index + 1 }"
+                   autocomplete="off" spellcheck="false">
+            <button type="button" class="clear" title="Clear this slot"
+                    aria-label="Clear slot ${ index + 1 }">&times;</button>
+        </header>
+        <div class="levels">
+            <label>From
+                <input class="from" type="number" inputmode="numeric"
+                       min="1" max="${ MAX_LEVEL - 1 }" value="1">
+            </label>
+            <label>To
+                <input class="to" type="number" inputmode="numeric"
+                       min="2" max="${ MAX_LEVEL }" value="100">
+            </label>
+            <span class="curve" aria-live="polite"></span>
         </div>
-
-        <div class="member-candy-output" id="output-${member.id}"></div>
-      </div>
     `;
 
-    container.appendChild(card);
-  });
+    const slot = {
+        card,
+        species: card.querySelector( '.species' ),
+        from:    card.querySelector( '.from' ),
+        to:      card.querySelector( '.to' ),
+        curve:   card.querySelector( '.curve' )
+    };
 
-  const addBtn = document.getElementById('add-member-btn');
-  if (addBtn) addBtn.disabled = state.team.length >= 6;
+    slot.species.addEventListener( 'input', () => { refreshCurve( slot ); recalc(); } );
+    slot.from.addEventListener( 'input', recalc );
+    slot.to.addEventListener( 'input', recalc );
+    [ slot.from, slot.to ].forEach( input => {
+        input.addEventListener( 'blur', () => {
+            const n = parseInt( input.value, 10 );
+            input.value = isNaN( n )
+                ? input.min
+                : clamp( n, +input.min, +input.max );
+            recalc();
+        } );
+    } );
+    card.querySelector( '.clear' ).addEventListener( 'click', () => {
+        slot.species.value = '';
+        slot.from.value = 1;
+        slot.to.value = MAX_LEVEL;
+        refreshCurve( slot );
+        recalc();
+        slot.species.focus();
+    } );
+
+    slots.push( slot );
+    return card;
 }
 
-function getPokemonOptions(selectedKey) {
-  if (!state.pokemonData) return '';
-  return Object.keys(state.pokemonData).sort().map(key => {
-    const selected = key === selectedKey ? 'selected' : '';
-    const name = state.pokemonData[key].name || key;
-    return `<option value="${key}" ${selected}>${name}</option>`;
-  }).join('');
+/** Case-insensitive species lookup against the loaded dex. */
+function matchSpecies( value ) {
+    const key = value.trim().toLowerCase();
+    if ( !key ) return null;
+    for ( const name in POKEMON ) {
+        if ( name.toLowerCase() === key ) return name;
+    }
+    return null;
 }
 
-window.updateMember = function(id, field, value) {
-  const member = state.team.find(m => m.id === id);
-  if (member) {
-    member[field] = value;
-    if (field === 'currentLevel') member.currentLevel = Math.max(1, Math.min(99, member.currentLevel));
-    if (field === 'targetLevel') member.targetLevel = Math.max(member.currentLevel + 1, Math.min(100, member.targetLevel));
-    calculateAndRender();
-  }
-};
+function refreshCurve( slot ) {
+    const name = matchSpecies( slot.species.value );
+    slot.curve.textContent = name ? POKEMON[ name ] : '';
+    slot.card.classList.toggle( 'filled', !!name );
+    slot.card.classList.toggle(
+        'unknown', slot.species.value.trim().length > 0 && !name );
+}
 
-window.removeMember = function(id) {
-  state.team = state.team.filter(m => m.id !== id);
-  renderTeamSlots();
-  calculateAndRender();
-};
+/** Read every slot and return the ones that describe a real, valid job. */
+function readTeam() {
+    const team = [];
+    slots.forEach( ( slot, i ) => {
+        const name = matchSpecies( slot.species.value );
+        if ( !name ) return;
+        const from = clamp( parseInt( slot.from.value, 10 ) || 1, 1, MAX_LEVEL );
+        const to   = clamp( parseInt( slot.to.value, 10 ) || 1, 1, MAX_LEVEL );
+        const curve = POKEMON[ name ];
+        team.push( {
+            slot: i + 1,
+            name,
+            curve,
+            from,
+            to,
+            invalid: to <= from,
+            expNeeded: Math.max( 0, expAtLevel( curve, to ) - expAtLevel( curve, from ) )
+        } );
+    } );
+    return team;
+}
 
-function calculateAndRender() {
-  const activeCandies = CANDIES.filter(c => state.allowedCandies.has(c.id));
-  const teamTotals = { XS: 0, S: 0, M: 0, L: 0, XL: 0, totalXP: 0 };
+// ------------------------------------------------------------------ results
 
-  state.team.forEach(member => {
-    const memberOutputEl = document.getElementById(`output-${member.id}`);
+function recalc() {
+    const team = readTeam();
+    const allowed = allowedKeys();
+    const sizes = CANDIES.filter( c => allowed.includes( c.key ) );
+    const out = $( '#results' );
+    out.innerHTML = '';
 
-    if (!member.pokemonKey || !state.pokemonData || !state.pokemonData[member.pokemonKey]) {
-      if (memberOutputEl) memberOutputEl.innerHTML = '<small>Select a Pokémon</small>';
-      return;
+    if ( !team.length ) {
+        out.appendChild( el( 'p', 'empty',
+            'Add a Pokemon to a slot above and the plan appears here.' ) );
+        return;
     }
 
-    const requiredXP = calculateXP(
-      state.pokemonData[member.pokemonKey],
-      member.currentLevel,
-      member.targetLevel
-    );
-
-    const candyAlloc = allocateCandies(requiredXP, activeCandies);
-
-    teamTotals.totalXP += requiredXP;
-    Object.keys(candyAlloc).forEach(size => {
-      teamTotals[size] += candyAlloc[size];
-    });
-
-    if (memberOutputEl) {
-      memberOutputEl.innerHTML = `
-        <p><strong>XP Needed:</strong> ${requiredXP.toLocaleString()}</p>
-        <p><strong>Candies:</strong> ${formatCandyBreakdown(candyAlloc)}</p>
-      `;
+    const bad = team.filter( m => m.invalid );
+    if ( bad.length ) {
+        out.appendChild( el( 'p', 'warn', bad.length === 1
+            ? `Slot ${ bad[ 0 ].slot }: the target level has to be above the current level.`
+            : `Slots ${ bad.map( m => m.slot ).join( ', ' ) }: target levels have to be above current levels.` ) );
     }
-  });
 
-  renderTeamSummary(teamTotals);
-}
+    const jobs = team.filter( m => !m.invalid );
+    if ( !jobs.length ) return;
 
-function calculateXP(pokemon, currentLvl, targetLvl) {
-  if (currentLvl >= targetLvl) return 0;
-  const expTable = pokemon.expTable || (state.pokemonData.growthRates && state.pokemonData.growthRates[pokemon.growthRate]);
-  if (expTable) {
-    return expTable[targetLvl - 1] - expTable[currentLvl - 1];
-  }
-  return 0;
-}
+    const rows = jobs.map( m => ( { member: m, plan: solve( m.expNeeded, allowed ) } ) );
 
-function allocateCandies(requiredXP, activeCandies) {
-  const allocation = { XS: 0, S: 0, M: 0, L: 0, XL: 0 };
-  if (requiredXP <= 0 || activeCandies.length === 0) return allocation;
+    // Totals across the party.
+    const totals = {};
+    sizes.forEach( c => totals[ c.key ] = 0 );
+    let totalExp = 0, totalSurplus = 0, totalCandy = 0;
+    rows.forEach( ( { member, plan } ) => {
+        if ( !plan ) return;
+        sizes.forEach( c => totals[ c.key ] += plan.counts[ c.key ] || 0 );
+        totalExp += member.expNeeded;
+        totalSurplus += plan.surplus;
+        totalCandy += plan.total;
+    } );
 
-  let remainingXP = requiredXP;
+    // --- table
+    const table = el( 'table', 'plan' );
+    const head = el( 'thead' );
+    const hr = el( 'tr' );
+    hr.appendChild( el( 'th', 'th-mon', 'Pokemon' ) );
+    hr.appendChild( el( 'th', 'th-lv', 'Levels' ) );
+    hr.appendChild( el( 'th', 'num', 'Exp. needed' ) );
+    sizes.forEach( c => {
+        const th = el( 'th', 'num' );
+        const abbr = el( 'abbr', null, c.label );
+        abbr.title = c.title + ' Exp. Candy';
+        th.appendChild( abbr );
+        hr.appendChild( th );
+    } );
+    hr.appendChild( el( 'th', 'num', 'Wasted' ) );
+    head.appendChild( hr );
+    table.appendChild( head );
 
-  for (const candy of activeCandies) {
-    if (remainingXP <= 0) break;
-    const count = Math.floor(remainingXP / candy.exp);
-    if (count > 0) {
-      allocation[candy.id] = count;
-      remainingXP -= count * candy.exp;
+    const body = el( 'tbody' );
+    rows.forEach( ( { member, plan } ) => {
+        const tr = el( 'tr' );
+        const mon = el( 'td', 'th-mon' );
+        mon.appendChild( el( 'span', 'slot-no', String( member.slot ) ) );
+        mon.appendChild( el( 'span', 'mon-name', member.name ) );
+        mon.appendChild( el( 'span', 'mon-curve', member.curve ) );
+        tr.appendChild( mon );
+        tr.appendChild( el( 'td', 'th-lv', `${ member.from } \u2192 ${ member.to }` ) );
+
+        if ( !plan ) {
+            const td = el( 'td', 'num warn-cell' );
+            td.colSpan = sizes.length + 2;
+            td.textContent = 'No combination reaches this target.';
+            tr.appendChild( td );
+            body.appendChild( tr );
+            return;
+        }
+
+        tr.appendChild( el( 'td', 'num', fmt( member.expNeeded ) ) );
+        sizes.forEach( c => {
+            const n = plan.counts[ c.key ] || 0;
+            tr.appendChild( el( 'td', n ? 'num' : 'num zero', n ? fmt( n ) : '\u2013' ) );
+        } );
+        tr.appendChild( el( 'td', plan.surplus ? 'num' : 'num zero',
+            plan.surplus ? fmt( plan.surplus ) : '0' ) );
+        body.appendChild( tr );
+    } );
+    table.appendChild( body );
+
+    const foot = el( 'tfoot' );
+    const fr = el( 'tr' );
+    const label = el( 'td', 'th-mon', 'Party total' );
+    label.colSpan = 2;
+    fr.appendChild( label );
+    fr.appendChild( el( 'td', 'num', fmt( totalExp ) ) );
+    sizes.forEach( c => fr.appendChild(
+        el( 'td', totals[ c.key ] ? 'num' : 'num zero',
+            totals[ c.key ] ? fmt( totals[ c.key ] ) : '\u2013' ) ) );
+    fr.appendChild( el( 'td', totalSurplus ? 'num' : 'num zero',
+        totalSurplus ? fmt( totalSurplus ) : '0' ) );
+    foot.appendChild( fr );
+    table.appendChild( foot );
+    out.appendChild( table );
+
+    // --- summary line
+    const { shards, dropOnly } = shardCost( totals );
+    const mons = jobs.length === 1 ? '1 Pokemon' : `${ jobs.length } Pokemon`;
+    const summary = el( 'p', 'summary' );
+    const line = txt => summary.appendChild( document.createTextNode( txt ) );
+
+    summary.appendChild( el( 'strong', null, `${ fmt( totalCandy ) } candies` ) );
+    line( ` for ${ mons }, wasting ${ fmt( totalSurplus ) } Exp.` );
+
+    if ( shards ) {
+        line( dropOnly ? ' The S, M and L cost ' : ' That is ' );
+        summary.appendChild( el( 'strong', 'shards', `${ fmt( shards ) } Mega Shards` ) );
+        line( ' at Quasartico Inc.' );
     }
-  }
-
-  if (remainingXP > 0) {
-    const smallestAllowed = activeCandies[activeCandies.length - 1];
-    allocation[smallestAllowed.id] += 1;
-  }
-
-  return allocation;
-}
-
-function renderTeamSummary(teamTotals) {
-  const summaryEl = document.getElementById('total-candies-output');
-  if (!summaryEl) return;
-
-  const shardsNeeded = (teamTotals.S * SHARD_PRICES.S) + (teamTotals.M * SHARD_PRICES.M) + (teamTotals.L * SHARD_PRICES.L);
-
-  summaryEl.innerHTML = `
-    <div class="summary-card">
-      <h3>Team Totals</h3>
-      <p><strong>Total XP Required:</strong> ${teamTotals.totalXP.toLocaleString()}</p>
-      <div class="total-candies-list">
-        ${formatCandyBreakdown(teamTotals)}
-      </div>
-      <div class="shards-estimate">
-        <p><strong>Est. Mega Shards (S/M/L):</strong> 💎 ${shardsNeeded.toLocaleString()}</p>
-      </div>
-    </div>
-  `;
-}
-
-function formatCandyBreakdown(candyCounts) {
-  const parts = [];
-  CANDIES.forEach(c => {
-    if (candyCounts[c.id] > 0) {
-      parts.push(`<span><strong>${candyCounts[c.id]}x</strong> ${c.id}</span>`);
+    if ( dropOnly ) {
+        line( ` ${ fmt( dropOnly ) } of them are XS or XL, which are not sold for shards \u2014 those have to come from Alphas, missions or loot around Lumiose.` );
     }
-  });
-  return parts.length > 0 ? parts.join(', ') : 'None';
+    out.appendChild( summary );
 }
+
+// -------------------------------------------------------------------- start
+
+function init() {
+    const roster = $( '#roster' );
+    for ( let i = 0; i < MAX_SLOTS; i++ ) roster.appendChild( buildSlot( i ) );
+
+    const list = $( '#pokemon-list' );
+    const frag = document.createDocumentFragment();
+    Object.keys( POKEMON ).forEach( name => {
+        const option = document.createElement( 'option' );
+        option.value = name;
+        frag.appendChild( option );
+    } );
+    list.appendChild( frag );
+
+    $( '#shop-only' ).addEventListener( 'change', recalc );
+    $( '#reset' ).addEventListener( 'click', () => {
+        slots.forEach( slot => {
+            slot.species.value = '';
+            slot.from.value = 1;
+            slot.to.value = MAX_LEVEL;
+            refreshCurve( slot );
+        } );
+        recalc();
+    } );
+
+    recalc();
+}
+
+// Exposed for tests.
+if ( typeof module !== 'undefined' ) {
+    module.exports = { solve, shardCost, expAtLevel, CANDIES, CURVES };
+}
+
+if ( typeof window === 'undefined' ) return;
+
+const domReady = () => new Promise( res => {
+    if ( document.readyState !== 'loading' ) res();
+    else document.addEventListener( 'DOMContentLoaded', res );
+} );
+
+// window.POKEMON_DATA is set by the bundled build; otherwise fetch the JSON.
+if ( window.POKEMON_DATA ) {
+    POKEMON = window.POKEMON_DATA;
+    domReady().then( init );
+} else {
+    Promise.all( [
+        fetch( 'static/pokemon.json' ).then( r => r.json() ),
+        domReady()
+    ] ).then( ( [ data ] ) => {
+        for ( const slug in data ) {
+            POKEMON[ data[ slug ].name ] = data[ slug ].experience_group;
+        }
+        init();
+    } ).catch( () => {
+        document.getElementById( 'results' ).textContent =
+            'Could not load the Pokemon list. Serve this page over http:// rather than opening the file directly.';
+    } );
+}
+
+} )();
