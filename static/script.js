@@ -1,243 +1,273 @@
-( () => {
-var curves;
-const CANDY_SIZES = [ 'XS', 'S', 'M', 'L', 'XL' ];
-const SIZE_TITLES = [ 'Extra Small', 'Small', 'Medium', 'Large', 'Extra Large' ];
-const calcExpToLv = ( curve, n ) => ( n <= 1 ) ? 0 : curves[ curve ]( n );
-const clamp = ( num, lb, ub ) => Math.max( lb, Math.min( num, ub ) );
-const fmtNum = ( num ) => num.toString().replace( /\B(?=(\d{3})+(?!\d))/g, ',' );
-const toCamel = ( str ) => str.toLowerCase().replace( /\s+([a-z])/g, ( _, chr ) => chr.toUpperCase() );
+/**
+ * Pokémon Candy & Team Calculator
+ */
 
-curves = {
-    fast: function( n ) {
-        return Math.floor( Math.pow( n, 3 ) * 4 / 5 );
-    },
-    slow: function( n ) {
-        return Math.floor( Math.pow( n, 3 ) * 5 / 4 );
-    },
-    mediumFast: function( n ) {
-        return Math.pow( n, 3 );
-    },
-    mediumSlow: function( n ) {
-        return Math.floor( Math.pow( n, 3 ) * 6 / 5 - Math.pow( n, 2 ) * 15 + n * 100 - 140 );
-    },
-    erratic: function( n ) {
-        if ( n < 50 ) {
-            return Math.floor( Math.pow( n, 3 ) * ( 100 - n ) / 50 );
-        } else if ( 50 <= n && n <= 68 ) {
-            return Math.floor( Math.pow( n, 3 ) * ( 150 - n ) / 100 );
-        } else if ( 68 < n && n < 98 ) {
-            return Math.floor( Math.pow( n, 3 ) * ( 1911 - n * 10 ) / 1500 );
-        }
-        return Math.floor( Math.pow( n, 3 ) * ( 160 - n ) / 100 );
-    },
-    fluctuating: function( n ) {
-        if ( n < 15 ) {
-            return Math.floor( Math.pow( n, 3 ) * ( 73 + n ) / 150 );
-        } else if ( 15 <= n && n < 36 ) {
-            return Math.floor( Math.pow( n, 3 ) * ( 14 + n ) / 50 );
-        }
-        return Math.floor( Math.pow( n, 3 ) * ( 64 + n ) / 100 );
+// Configuration & Constants
+const CANDIES = [
+  { id: 'XL', exp: 30000, name: 'Exp. Candy XL' },
+  { id: 'L',  exp: 10000, name: 'Exp. Candy L' },
+  { id: 'M',  exp: 3000,  name: 'Exp. Candy M' },
+  { id: 'S',  exp: 800,   name: 'Exp. Candy S' },
+  { id: 'XS', exp: 100,   name: 'Exp. Candy XS' }
+];
+
+// Stub for Legends ZA Mega Shards (Adjust prices as needed)
+const SHARD_PRICES = {
+  S: 10,
+  M: 35,
+  L: 100
+};
+
+// Global Application State
+const state = {
+  pokemonData: null,
+  allowedCandies: new Set(['S', 'M', 'L']), // Default enabled sizes
+  team: [
+    { id: Date.now(), pokemonKey: '', currentLevel: 1, targetLevel: 50 }
+  ]
+};
+
+// --- Initialization ---
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadPokemonData();
+  initUI();
+  calculateAndRender();
+});
+
+async function loadPokemonData() {
+  try {
+    const response = await fetch('pokemon.json');
+    state.pokemonData = await response.json();
+  } catch (error) {
+    console.error('Failed to load pokemon.json:', error);
+  }
+}
+
+function initUI() {
+  // Bind Candy Filter Checkboxes
+  document.querySelectorAll('.candy-toggle').forEach(checkbox => {
+    checkbox.addEventListener('change', (e) => {
+      const size = e.target.value;
+      if (e.target.checked) {
+        state.allowedCandies.add(size);
+      } else {
+        state.allowedCandies.delete(size);
+      }
+      calculateAndRender();
+    });
+  });
+
+  // Add Member Button Listener
+  const addBtn = document.getElementById('add-member-btn');
+  if (addBtn) {
+    addBtn.addEventListener('click', () => {
+      if (state.team.length < 6) {
+        state.team.push({
+          id: Date.now(),
+          pokemonKey: '',
+          currentLevel: 1,
+          targetLevel: 50
+        });
+        renderTeamSlots();
+        calculateAndRender();
+      }
+    });
+  }
+}
+
+// --- Dynamic UI Rendering ---
+function renderTeamSlots() {
+  const container = document.getElementById('team-container');
+  if (!container) return;
+
+  container.innerHTML = '';
+
+  state.team.forEach((member, index) => {
+    const card = document.createElement('div');
+    card.className = 'team-member-card';
+    card.dataset.id = member.id;
+
+    card.innerHTML = `
+      <div class="card-header">
+        <h4>Member ${index + 1}</h4>
+        ${state.team.length > 1 ? `<button class="remove-btn" onclick="removeMember(${member.id})">✕</button>` : ''}
+      </div>
+      <div class="card-body">
+        <label>
+          Pokémon:
+          <select class="species-select" onchange="updateMember(${member.id}, 'pokemonKey', this.value)">
+            <option value="">Select Pokémon...</option>
+            ${getPokemonOptions(member.pokemonKey)}
+          </select>
+        </label>
+        
+        <div class="level-inputs">
+          <label>
+            Current Lvl:
+            <input type="number" min="1" max="99" value="${member.currentLevel}" 
+                   onchange="updateMember(${member.id}, 'currentLevel', parseInt(this.value) || 1)">
+          </label>
+          <label>
+            Target Lvl:
+            <input type="number" min="2" max="100" value="${member.targetLevel}" 
+                   onchange="updateMember(${member.id}, 'targetLevel', parseInt(this.value) || 100)">
+          </label>
+        </div>
+
+        <div class="member-candy-output" id="output-${member.id}"></div>
+      </div>
+    `;
+
+    container.appendChild(card);
+  });
+
+  // Disable add button if team size limit reached
+  const addBtn = document.getElementById('add-member-btn');
+  if (addBtn) addBtn.disabled = state.team.length >= 6;
+}
+
+function getPokemonOptions(selectedKey) {
+  if (!state.pokemonData) return '';
+  
+  // Sort species alphabetically
+  const keys = Object.keys(state.pokemonData).sort();
+  return keys.map(key => {
+    const selected = key === selectedKey ? 'selected' : '';
+    const name = state.pokemonData[key].name || key;
+    return `<option value="${key}" ${selected}>${name}</option>`;
+  }).join('');
+}
+
+// --- State Mutations ---
+window.updateMember = function(id, field, value) {
+  const member = state.team.find(m => m.id === id);
+  if (member) {
+    member[field] = value;
+    
+    // Bounds enforcement
+    if (field === 'currentLevel') member.currentLevel = Math.max(1, Math.min(99, member.currentLevel));
+    if (field === 'targetLevel') member.targetLevel = Math.max(member.currentLevel + 1, Math.min(100, member.targetLevel));
+    
+    calculateAndRender();
+  }
+};
+
+window.removeMember = function(id) {
+  state.team = state.team.filter(m => m.id !== id);
+  renderTeamSlots();
+  calculateAndRender();
+};
+
+// --- Calculation Engine ---
+function calculateAndRender() {
+  const activeCandies = CANDIES.filter(c => state.allowedCandies.has(c.id));
+  const teamTotals = { XS: 0, S: 0, M: 0, L: 0, XL: 0, totalXP: 0 };
+
+  state.team.forEach(member => {
+    const memberOutputEl = document.getElementById(`output-${member.id}`);
+    
+    if (!member.pokemonKey || !state.pokemonData[member.pokemonKey]) {
+      if (memberOutputEl) memberOutputEl.innerHTML = '<small>Select a Pokémon</small>';
+      return;
     }
-}
 
-function log( mssg = false ) {
-    var $log = $( '#log' );
-    if ( mssg ) {
-        $log.removeAttr( 'hidden' )
-            .text( mssg );
-    } else {
-        $log.attr( 'hidden', '' );
+    const requiredXP = calculateXP(
+      state.pokemonData[member.pokemonKey],
+      member.currentLevel,
+      member.targetLevel
+    );
+
+    const candyAlloc = allocateCandies(requiredXP, activeCandies);
+
+    // Accumulate Team Totals
+    teamTotals.totalXP += requiredXP;
+    Object.keys(candyAlloc).forEach(size => {
+      teamTotals[size] += candyAlloc[size];
+    });
+
+    // Render individual member breakdown
+    if (memberOutputEl) {
+      memberOutputEl.innerHTML = `
+        <p><strong>XP Needed:</strong> ${requiredXP.toLocaleString()}</p>
+        <p><strong>Candies:</strong> ${formatCandyBreakdown(candyAlloc)}</p>
+      `;
     }
-    return $log;
+  });
+
+  renderTeamSummary(teamTotals);
 }
 
-function validate() {
-    var currentLv, targetLv, disable = false;
-    $( 'form [id^=result]' ).each( function() {
-        $( this ).val( '-' );
-    } );
-    if ( !( $( '#curve' ).val().length ) ) {
-        disable = 'Fill out the Pokémon species field.';
-    } else {
-        currentLv = parseInt( $( '#current' ).val() ),
-        targetLv = parseInt( $( '#target' ).val() );
-        if ( currentLv == targetLv ) {
-            disable = 'Current Level cannot be equal to Target Level.';
-        } else if ( currentLv > targetLv ) {
-            disable = 'Current Level cannot exceed Target Level.';
-        }
+function calculateXP(pokemon, currentLvl, targetLvl) {
+  if (currentLvl >= targetLvl) return 0;
+  
+  // Handles growth rates or direct cumulative EXP arrays in pokemon.json
+  const expTable = pokemon.expTable || (state.pokemonData.growthRates && state.pokemonData.growthRates[pokemon.growthRate]);
+  
+  if (expTable) {
+    return expTable[targetLvl - 1] - expTable[currentLvl - 1];
+  }
+  
+  return 0; // Fallback if schema differs
+}
+
+function allocateCandies(requiredXP, activeCandies) {
+  const allocation = { XS: 0, S: 0, M: 0, L: 0, XL: 0 };
+  if (requiredXP <= 0 || activeCandies.length === 0) return allocation;
+
+  let remainingXP = requiredXP;
+
+  // Greedy allocation from largest active size to smallest
+  for (const candy of activeCandies) {
+    if (remainingXP <= 0) break;
+    const count = Math.floor(remainingXP / candy.exp);
+    if (count > 0) {
+      allocation[candy.id] = count;
+      remainingXP -= count * candy.exp;
     }
-    log( disable );
-    $( '[type=submit]' ).prop( 'disabled', disable.length > 0 );
+  }
+
+  // Cover remaining XP gap with 1 smallest allowed candy
+  if (remainingXP > 0) {
+    const smallestAllowed = activeCandies[activeCandies.length - 1];
+    allocation[smallestAllowed.id] += 1;
+  }
+
+  return allocation;
 }
 
-function testTimeout( start ) {
-    var d, now = new Date();
-    d = ( now.getTime() - start.getTime() ) / 1000;
-    if ( d > 60 ) throw new Error( 'timeout' );
+function calculateMegaShards(teamTotals) {
+  return (teamTotals.S * (SHARD_PRICES.S || 0)) +
+         (teamTotals.M * (SHARD_PRICES.M || 0)) +
+         (teamTotals.L * (SHARD_PRICES.L || 0));
 }
 
-function optimize( problem ) {
-    var lp, iocp, start, colname, colval, objval;
+// --- Summary & Output Formatting ---
+function renderTeamSummary(teamTotals) {
+  const summaryEl = document.getElementById('total-candies-output');
+  if (!summaryEl) return;
 
-    start = new Date();
+  const shardsNeeded = calculateMegaShards(teamTotals);
 
-    lp = glp_create_prob();
-    glp_read_lp_from_string( lp, null, problem );
+  summaryEl.innerHTML = `
+    <div class="summary-card">
+      <h3>Team Totals</h3>
+      <p><strong>Total XP Required:</strong> ${teamTotals.totalXP.toLocaleString()}</p>
+      <div class="total-candies-list">
+        ${formatCandyBreakdown(teamTotals)}
+      </div>
+      <div class="shards-estimate">
+        <p><strong>Est. Mega Shards (S/M/L):</strong> 💎 ${shardsNeeded.toLocaleString()}</p>
+      </div>
+    </div>
+  `;
+}
 
-    glp_scale_prob( lp, GLP_SF_AUTO );
-
-    iocp = new IOCP( { presolve: GLP_ON } );
-    glp_intopt( lp, iocp );
-
-    try {
-        objval = glp_mip_obj_val( lp );
-        testTimeout( start );
-
-        for( let i = 1; i <= glp_get_num_cols( lp ); i++ ){
-            colname = glp_get_col_name( lp, i ),
-            colval = glp_mip_col_val( lp, i );
-            testTimeout( start );
-            $( '#result-exp-candy-' + colname ).val( colval );
-            objval -= colval;
-        }
-        return objval;
-    } catch ( err ) {
-        log( 'Timed out looking for a solution.' );
+function formatCandyBreakdown(candyCounts) {
+  const parts = [];
+  CANDIES.forEach(c => {
+    if (candyCounts[c.id] > 0) {
+      parts.push(`<span><strong>${candyCounts[c.id]}x</strong> ${c.id}</span>`);
     }
+  });
+  return parts.length > 0 ? parts.join(', ') : 'None';
 }
-
-$( document ).ready( function() {
-    // read candy MILP problem
-    $.get( 'problem.txt', function( problemTemplate ) {
-        var i, len;
-
-        // read Pokémon names and experience curves
-        $.getJSON( 'static/pokemon.json', function( pokemonData ) {
-            var slug, slugs;
-
-            // add each Pokémon to the datalist
-            slugs = Object.keys( pokemonData );
-            len = slugs.length;
-            for ( i = 0; i < len; i++ ) {
-                slug = slugs[ i ];
-                $( '<option>' )
-                    .attr( 'value', pokemonData[ slug ].name )
-                    .attr( 'data-exp-curve', pokemonData[ slug ].experience_group )
-                    .appendTo( 'datalist' );
-            }
-
-            // show the experience curve when a Pokémon name is typed
-            $( '#pokemon' ).on( 'input', function() {
-                var value, $match;
-                value = this.value;
-                $match = $( 'datalist option' ).filter( function() {
-                    return this.value.toUpperCase() == value.toUpperCase();
-                } );
-                if ( $match.length ) {
-                    value = $( 'datalist option[value="' + $match.val() + '"]' ).attr( 'data-exp-curve' );
-                    $( '#curve' ).val( value );
-                } else {
-                    $( '#curve' ).val( '' );
-                }
-                validate();
-            } );
-
-            // clear input on select
-            $( '#pokemon' ).click( function() {
-                var $curve = $( '#curve' );
-                if ( $curve.val() ) {
-                    $( this ).val( '' );
-                    $curve.val( '' );
-                    validate();
-                }
-            } );
-        } );
-
-        // create rows for candy in bag
-        ( () => {
-            var slug, target, template, $template;
-            $template = $( '#calc template' );
-            target = $template.attr( 'data-target' );
-            template = $template.html().trim();
-            len = CANDY_SIZES.length;
-            for ( i = 0; i < len; i++ ) {
-                slug = 'exp-candy-' + CANDY_SIZES[ i ].toLowerCase();
-                $template = $( template );
-                $template.find( 'label' )
-                    .attr( 'for', slug )
-                    .append(
-                        $( '<abbr></abbr>' )
-                            .attr( 'title', SIZE_TITLES[ i ] + ' Experience Candy' )
-                            .text( 'Exp. Candy ' + CANDY_SIZES[ i ] )
-                    );
-                $template.find( 'input[type=number]' )
-                    .attr( 'id', slug )
-                    .attr( 'name', slug );
-                $template.find( 'input[readonly]' )
-                        .attr( 'id', 'result-' + slug );
-                $template.appendTo( target );
-            }
-        } )();
-
-        // restrict numerical input
-        ( () => {
-            $( 'input[type=number]' ).on( 'change', function() {
-                var value, $this;
-                value = parseInt( this.value );
-                $this = $( this );
-                if ( !isNaN( value ) ) {
-                    value = clamp( value, $this.attr( 'min' ), $this.attr( 'max' ) );
-                    $this.val( value );
-                } else {
-                    $this.val( $this.attr( 'min' ) );
-                }
-                validate();
-            } );
-        } )();
-
-        // calculate optimal candy distribution
-        ( () => {
-            $( 'form' ).on( 'submit', function( evt ) {
-                var expDiff, expCurrent, expTarget, curve, values, problem;
-                values = {};
-                evt.preventDefault();
-                $.each( $( 'form' ).serializeArray(), function( _, field ) {
-                    values[ field.name ] = field.value;
-                } );
-                curve = toCamel( values.curve );
-                expCurrent = calcExpToLv( curve, parseInt( values.current ) );
-                expTarget = calcExpToLv( curve, parseInt( values.target ) );
-                expDiff = expTarget - expCurrent;
-
-                problem = problemTemplate.replace( /{exp}/g, expDiff );
-                len = CANDY_SIZES.length;
-                for ( i = 0; i < len; i++ ) {
-                    let size = CANDY_SIZES[ i ].toLowerCase();
-                    problem = problem.replace( RegExp( '{' + size + '}' ), values[ 'exp-candy-' + size ] );
-                }
-
-                expCurrent = optimize( problem );
-                expDiff = expCurrent - expDiff;
-
-                if ( expDiff > 0 ) {
-                    log( 'Solution found with a surplus of ' + fmtNum( expDiff ) + ' Exp. Points.' );
-                } else if ( expDiff == 0 ) {
-                    log( 'Optimal solution found! ' )
-                        .append( $( '<a href="#">Click here to reset.</a>' ).click( function( evt ) {
-                            evt.preventDefault();
-                            $( '#calc form' ).trigger( 'reset' );
-                            log();
-                        } ) );
-                } else {
-                    log( 'No feasible solution found! Check if there is enough candy.' );
-                }
-            } );
-        } )();
-
-        validate();
-
-    }, 'text' );
-} );
-
-} )();
